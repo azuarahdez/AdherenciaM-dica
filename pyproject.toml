@@ -1,0 +1,17 @@
+# Configuración de la app móvil (Flet). GitHub Actions la usa para generar el APK.
+[project]
+name = "adherencia"
+version = "0.4.0"
+description = "Seguimiento de adherencia terapéutica con un mapa cognitivo difuso (FCM)"
+requires-python = ">=3.10"
+dependencies = ["flet==1.0.5"]
+
+[tool.flet]
+org = "mx.edu.itsmt"
+product = "Adherencia"
+company = "ITS Martínez de la Torre"
+copyright = "ITS Martínez de la Torre"
+
+[tool.flet.app]
+path = "."
+exclude = [".github", "README.md", "requirements.txt", "build"]
