@@ -47,28 +47,43 @@ def estado_dosis(app, hora, nota):
 
 
 # ------------------------------------------------------------------ estado de ánimo
-ANIMOS = [  # (emoji, etiqueta, mensaje al elegirlo)
-    ("😠", "Enojado", "Gracias por decírnoslo. Respira profundo; si algo del tratamiento te "
-                         "molesta, platícalo con tu equipo de salud."),
-    ("😢", "Triste", "Lamentamos que te sientas así. Si la tristeza continúa, cuéntaselo a tu "
-                     "equipo de salud; estamos para acompañarte."),
-    ("😐", "Normal", "Gracias por contarnos. ¡Sigue así con tu tratamiento!"),
-    ("🙂", "Feliz", "¡Qué bien! Nos alegra que te sientas así."),
-    ("😄", "Súper feliz", "¡Excelente! Que tengas un gran día."),
+ANIMOS = [  # (emoji, etiqueta, título de la frase, frase al elegirlo)
+    ("😠", "Enojado", "Respira profundo",
+     "Es normal tener días difíciles. Si algo de tu tratamiento te molesta, platícalo con tu "
+     "equipo de salud: estamos para ayudarte."),
+    ("😢", "Triste", "No estás solo(a)",
+     "Gracias por contárnoslo. Si la tristeza continúa varios días, coméntalo con tu equipo de "
+     "salud. Cuidarte también es tomar tu tratamiento."),
+    ("😐", "Normal", "Un paso a la vez",
+     "Cada dosis que tomas cuenta. ¡Sigue así con tu tratamiento!"),
+    ("🙂", "Feliz", "¡Qué gusto!",
+     "Nos alegra que te sientas bien. Tu constancia está dando resultados."),
+    ("😄", "Súper feliz", "¡Excelente día!",
+     "¡Esa energía es contagiosa! Aprovéchala y no olvides tus tomas de hoy."),
 ]
 
 
 def elegir_animo(app, indice):
+    """Guarda el ánimo y muestra una frase de acompañamiento según la carita elegida."""
     app.animo = indice
     app.page.pop_dialog()
-    app.avisar(ANIMOS[indice][2])
     app.dibujar()
+    emoji, _, titulo_frase, frase = ANIMOS[indice]
+    app.despues(lambda: app.page.show_dialog(ft.AlertDialog(
+        content=ft.Column([
+            ft.Text(emoji, size=64, text_align=ft.TextAlign.CENTER),
+            ui.texto(titulo_frase, 22, negrita=True, text_align=ft.TextAlign.CENTER),
+            ui.texto(frase, 16, ui.GRIS, text_align=ft.TextAlign.CENTER),
+        ], tight=True, spacing=10, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            width=320),
+        actions=[ft.FilledButton("Continuar", on_click=lambda e: app.page.pop_dialog())],
+        actions_alignment=ft.MainAxisAlignment.CENTER)))
 
 
 def encuesta_animo(app):
     """Diálogo sobrepuesto con 5 caritas, de enojado a súper feliz."""
     def carita(i):
-        emoji, etiqueta, _ = ANIMOS[i]
+        emoji, etiqueta, *_ = ANIMOS[i]
         elegida = app.animo == i
         return ft.Container(
             ft.Column([ft.Text(emoji, size=34), ui.texto(etiqueta, 11, ui.TEXTO,
@@ -92,19 +107,11 @@ def encuesta_animo(app):
 
 def pagina_inicio(app):
     nombre = app.nombre or app.paciente
-    if app.animo is None:
-        pregunta = ui.texto("¿Cómo te sientes hoy? Toca aquí 👆", 13, "#d9f3f1")
-    else:
-        emoji, etiqueta, _ = ANIMOS[app.animo]
-        pregunta = ui.texto(f"Hoy te sientes: {emoji} {etiqueta} · toca para cambiar", 13,
-                            "#d9f3f1")
-    saludo = ui.hero([
+    # La pregunta "¿Cómo te sientes hoy?" aparece sola al entrar (ver App.entrar_paciente).
+    controles = [ui.hero([
         ui.texto(fecha_larga(date.today()).capitalize(), 13, "#d9f3f1"),
         ui.texto(f"Hola, {nombre} 👋", 24, ft.Colors.WHITE, negrita=True),
-        pregunta,
-    ])
-    saludo.on_click, saludo.ink = lambda e: encuesta_animo(app), True
-    controles = [saludo]
+    ])]
 
     siguiente = proxima_dosis(app)
     if siguiente:
