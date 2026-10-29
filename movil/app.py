@@ -1,4 +1,6 @@
 """Estado de la sesión, navegación (barra inferior + botón Atrás de Android) y pantalla de entrada."""
+import asyncio
+
 import flet as ft
 
 from adherencia import instrumentos as ins
@@ -40,6 +42,7 @@ class App:
         page.theme_mode = ft.ThemeMode.LIGHT
         page.theme = ft.Theme(color_scheme_seed=ui.TEAL)
         page.on_view_pop = lambda e: self.ir(PADRE.get(self.pagina, self.pagina))
+        self._base = None  # vista raíz "/" (ver dibujar)
         self.reiniciar()
 
     # ------------------------------------------------------------- estado
@@ -65,20 +68,36 @@ class App:
         self.pagina = pagina
         self.dibujar()
 
+    def despues(self, funcion, segundos=0.4):
+        """Ejecuta `funcion` cuando ya se dibujó la pantalla nueva. Un diálogo abierto en el
+        mismo instante en que cambia la pantalla no llega a mostrarse."""
+        async def tarea():
+            await asyncio.sleep(segundos)
+            funcion()
+        self.page.run_task(tarea)
+
     def avisar(self, mensaje, error=False):
         self.page.show_dialog(ft.SnackBar(ft.Text(mensaje), bgcolor=ui.ROJO if error else None))
 
     # ------------------------------------------------------------- dibujo
     def dibujar(self):
         if self.rol is None:
-            vistas = [ft.View(route="/", controls=[pagina_entrada(self)], bgcolor=ui.FONDO,
-                              padding=0)]
+            base = ft.View(route="/", controls=[pagina_entrada(self)], bgcolor=ui.FONDO,
+                           padding=0)
         else:
             # Las secciones de la barra comparten la ruta "/" para cambiar sin animación;
             # las pantallas internas se apilan encima y se deslizan como en Android.
-            vistas = [self._vista(PADRE.get(self.pagina, self.pagina), "/")]
-            if self.pagina in PADRE:
-                vistas.append(self._vista(self.pagina, f"/{self.pagina}"))
+            base = self._vista(PADRE.get(self.pagina, self.pagina), "/")
+        # La vista "/" se reutiliza (solo cambia su contenido): si se reemplazara, Android
+        # cerraría los diálogos abiertos, como la pregunta de ánimo al entrar.
+        if self._base is None:
+            self._base = base
+        else:
+            self._base.controls = base.controls
+            self._base.appbar, self._base.navigation_bar = base.appbar, base.navigation_bar
+        vistas = [self._base]
+        if self.rol is not None and self.pagina in PADRE:
+            vistas.append(self._vista(self.pagina, f"/{self.pagina}"))
         self.page.views.clear()
         self.page.views.extend(vistas)
         self.page.update()
@@ -129,7 +148,12 @@ class App:
             ins.calcular_socioeconomico([15, 20, 20, 10, 15]),
         ]
         self.resultados = {r.codigo: r for r in ejemplo}
+        self.entrar_paciente()
+
+    def entrar_paciente(self):
+        """Abre Inicio y, encima, la pregunta de cómo se siente hoy."""
         self.ir("p_inicio")
+        self.despues(lambda: paciente.encuesta_animo(self))
 
 
 def pagina_entrada(app):
@@ -145,7 +169,7 @@ def pagina_entrada(app):
             app.avisar("Necesitamos tu consentimiento para continuar.", error=True)
         else:
             app.rol, app.paciente = "paciente", folio.value.strip()
-            app.ir("p_inicio")
+            app.entrar_paciente()
 
     def entrar_medico():
         app.rol, app.paciente = "medico", "Dra. López"
