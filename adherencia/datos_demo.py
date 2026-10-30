@@ -108,6 +108,21 @@ PASTILLERO = [
     "ottffff",  # la noche de hoy (21:00) todavía no toca
 ]
 
+# Tomas registradas (de 3) de jueves a domingo de la semana pasada; con lunes a miércoles
+# de PASTILLERO suman 19 de 21 en los últimos 7 días, como dice Inicio.
+TOMAS_SEMANA_PASADA = [("Jue", 3), ("Vie", 3), ("Sáb", 2), ("Dom", 3)]
+DIAS_CORTOS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
+
+
+def adherencia_ultimos_dias():
+    """(día, % de dosis tomadas) de los últimos 7 días completos; hoy aún no cuenta."""
+    dias = [(d, round(100 * n / len(HORARIOS))) for d, n in TOMAS_SEMANA_PASADA]
+    for i, dia in enumerate(DIAS_CORTOS):
+        estados = [fila[i] for fila in PASTILLERO]
+        if all(e in "to" for e in estados):
+            dias.append((dia, round(100 * estados.count("t") / len(estados))))
+    return dias[-7:]
+
 
 def _normalizar(texto):
     sin_acentos = unicodedata.normalize("NFD", texto.lower())
