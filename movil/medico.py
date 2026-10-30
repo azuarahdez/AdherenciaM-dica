@@ -1,11 +1,29 @@
 """Pantallas del personal de salud: pacientes, detalle, alertas y modelo FCM."""
+from datetime import datetime
+
 import flet as ft
 import flet.canvas as cv
 
 from adherencia import datos_demo as demo
-from movil import ui
+from movil import paciente, ui
 
 SEVERIDAD = {"alta": ("Alta", "bad"), "media": ("Media", "warn")}
+# Conceptos de entrada del mapa (los que no se calculan a partir de otros).
+ENTRADAS = [c for ents in demo.GRUPOS.values() for c in ents if c not in demo.ESTRUCTURA]
+
+
+def alertas(app, id_paciente=None):
+    """[(clave, id, nombre, nivel, texto, cuando)]: primero los síntomas que reportaron los
+    pacientes desde su app (el más reciente arriba), luego las del expediente."""
+    lista = [(f"R{len(app.reportes) - i}", r["id"], r["nombre"], r["nivel"], r["texto"],
+              r["cuando"]) for i, r in enumerate(app.reportes)]
+    lista += [(f"{p['id']}-{texto}", p["id"], p["nombre"], nivel, texto, cuando)
+              for p in demo.PACIENTES for nivel, texto, cuando in p["alertas"]]
+    return [a for a in lista if id_paciente in (None, a[1])]
+
+
+def _pendientes(app, id_paciente=None):
+    return [a for a in alertas(app, id_paciente) if a[0] not in app.atendidas]
 
 
 def _kpis(app):
@@ -18,8 +36,7 @@ def _kpis(app):
                      bgcolor=ft.Colors.WHITE, border=ft.Border.all(1, ui.BORDE),
                      border_radius=14, padding=8, expand=True)
         for t, v, c in datos], spacing=6)]
-    alertas = sum(len(p["alertas"]) for p in demo.PACIENTES)
-    pendientes = alertas - len(app.atendidas)
+    pendientes = len(_pendientes(app))
     if pendientes > 0:
         controles.append(ui.boton(f"{pendientes} alertas sin atender", lambda: app.ir("m_alertas"),
                                   ft.Icons.NOTIFICATIONS_ACTIVE, principal=True))
@@ -29,8 +46,9 @@ def _kpis(app):
 def _tarjeta_paciente(app, p):
     color = ui.COLOR_ETIQUETA[p["etiqueta"]]
     chips = [ui.chip(p["etiqueta"], ui.CHIP_ETIQUETA[p["etiqueta"]])]
-    if p["alertas"]:
-        chips.append(ui.chip(f"🔔 {len(p['alertas'])}", "bad"))
+    pendientes = len(_pendientes(app, p["id"]))
+    if pendientes:
+        chips.append(ui.chip(f"🔔 {pendientes}", "bad"))
 
     def abrir():
         app.paciente_sel = p["id"]
@@ -51,23 +69,33 @@ def _tarjeta_paciente(app, p):
 
 def pagina_panel(app):
     lista = ft.Column(spacing=12)
+    criterio = {"nivel": "Todos", "texto": ""}
 
-    def filtrar(filtro):
+    def filtrar():
+        buscado = demo._normalizar(criterio["texto"].strip())
         lista.controls = [_tarjeta_paciente(app, p)
                           for p in sorted(demo.PACIENTES, key=lambda p: p["c28"])
-                          if filtro == "Todos" or p["etiqueta"] == filtro]
+                          if criterio["nivel"] in ("Todos", p["etiqueta"])
+                          and buscado in demo._normalizar(p["nombre"])]
+        if not lista.controls:
+            lista.controls = [ui.sub("Ningún paciente coincide con la búsqueda.")]
 
-    def al_cambiar(e):
-        filtrar(e.control.selected[0])
+    def al_cambiar(clave, valor):
+        criterio[clave] = valor
+        filtrar()
         lista.update()
 
-    filtrar("Todos")
+    filtrar()
     filtro = ft.SegmentedButton(
         segments=[ft.Segment(f, label=f) for f in ("Todos", "Bueno", "Regular", "Malo")],
-        selected=["Todos"], show_selected_icon=False, on_change=al_cambiar)
+        selected=["Todos"], show_selected_icon=False,
+        on_change=lambda e: al_cambiar("nivel", e.control.selected[0]))
+    buscador = ft.TextField(hint_text="Buscar paciente por nombre", prefix_icon=ft.Icons.SEARCH,
+                            bgcolor=ft.Colors.WHITE, border_radius=12, dense=True,
+                            on_change=lambda e: al_cambiar("texto", e.control.value))
     return [ui.titulo("Mis pacientes", "Ordenados del que más atención necesita al que menos. "
                                        "Toca uno para ver su ficha."),
-            *_kpis(app), filtro, lista]
+            *_kpis(app), buscador, filtro, lista]
 
 
 def pagina_detalle(app):
@@ -83,9 +111,24 @@ def pagina_detalle(app):
                   expand=True, spacing=4),
     ], spacing=16))]
 
-    for nivel, texto, cuando in p["alertas"]:
+    for _, _, _, nivel, texto, cuando in _pendientes(app, p["id"]):
         etiqueta, _ = SEVERIDAD[nivel]
         controles.append(ui.aviso(f"**Alerta {etiqueta.lower()}** · {texto} · {cuando}"))
+
+    # Explicación: los conceptos de entrada más bajos son los que más jalan C28 hacia abajo.
+    debiles = sorted(ENTRADAS, key=lambda c: p["valores"][c])[:3]
+    controles.append(ui.tarjeta([
+        ui.sub("Son los 3 aspectos con valor más bajo; trabajar en ellos es lo que más ayuda a "
+               "subir su adherencia."),
+        ui.barras_h([(f"C{c} · {demo.CONCEPTOS[c]}", p["valores"][c], c) for c in debiles]),
+    ], "🔍 Lo que más puede mejorar" if p["etiqueta"] == "Bueno"
+        else f"🔍 ¿Por qué está en {p['etiqueta']}?"))
+
+    if p["id"] == "P2":  # Josefina usa la app: se ven sus tomas por día y su ánimo
+        dias = demo.adherencia_ultimos_dias()
+        controles.append(ui.tarjeta(ui.barras_v([v for _, v in dias], [d for d, _ in dias]),
+                                    "💊 Tomas de los últimos 7 días"))
+        controles.append(ui.tarjeta(_animo_paciente(app, p["id"]), "💭 Ánimo de esta semana"))
 
     finales = [(f"C{c} · {demo.CONCEPTOS[c]}", p["valores"][c], c) for c in (24, 25, 26, 27)]
     controles.append(ui.tarjeta(ui.barras_h(finales), "Factores que alimentan C28"))
@@ -108,6 +151,7 @@ def pagina_detalle(app):
     semanas = p["semanas"]
     controles.append(ui.tarjeta(ui.barras_v(semanas, [f"S{i + 1}" for i in range(len(semanas))]),
                                 "Adherencia semanal (pastillero)"))
+    controles.append(_notas(app, p["id"]))
     controles.append(ft.Row([
         ui.boton("Generar reporte", lambda: app.avisar("Próximamente"), ft.Icons.DESCRIPTION,
                  expand=True),
@@ -117,6 +161,45 @@ def pagina_detalle(app):
     return controles
 
 
+def _animo_paciente(app, id_paciente):
+    """Caritas de lunes a hoy; la de hoy es la que el paciente eligió al entrar a su app."""
+    animos = demo.ANIMO_SEMANA + [app.animos.get(id_paciente)]
+    dias = []
+    for i, dia in enumerate(demo.DIAS):
+        if i < len(animos) and animos[i] is not None:
+            cara = paciente.ANIMOS[animos[i]][0]
+        else:
+            cara = "❔" if i == paciente.HOY else "·"
+        dias.append(ft.Column([ft.Text(cara, size=26), ui.sub(dia, 12, negrita=i == paciente.HOY)],
+                              spacing=2, expand=True,
+                              horizontal_alignment=ft.CrossAxisAlignment.CENTER))
+    controles = [ft.Row(dias, spacing=0)]
+    if any(a is not None and a <= 1 for a in animos):
+        controles.append(ui.sub("Reportó sentirse enojado(a) o triste esta semana; conviene "
+                                "preguntarle en la próxima consulta."))
+    return controles
+
+
+def _notas(app, id_paciente):
+    notas = app.notas.setdefault(id_paciente, [])
+    campo = ft.TextField(hint_text="Ej. Llamar el lunes para revisar horarios", multiline=True,
+                         min_lines=1, max_lines=4, bgcolor=ft.Colors.WHITE, border_radius=12)
+
+    def guardar():
+        if not (campo.value or "").strip():
+            app.avisar("Escribe la nota.", error=True)
+            return
+        notas.insert(0, (f"{datetime.now():%d/%m %H:%M}", campo.value.strip()))
+        app.avisar("Nota guardada")
+        app.dibujar()
+
+    lista = [ui.fila(ft.Container(ui.texto(n, 14), expand=True), ui.sub(f, 12))
+             for f, n in notas]
+    return ui.tarjeta([*lista, campo,
+                       ui.boton("Guardar nota", lambda: guardar(), ft.Icons.NOTE_ADD)],
+                      "📝 Notas y plan de acción")
+
+
 def pagina_alertas(app):
     controles = [ui.titulo("Alertas", "Requieren atención del personal de salud.")]
 
@@ -124,19 +207,28 @@ def pagina_alertas(app):
         app.atendidas.add(clave)
         app.dibujar()
 
-    for p in demo.PACIENTES:
-        for nivel, texto, cuando in p["alertas"]:
-            clave = f"{p['id']}-{texto}"
-            etiqueta, tipo = SEVERIDAD[nivel]
-            atendida = clave in app.atendidas
-            contenido = [ui.fila(ft.Column([ui.texto(texto, negrita=True),
-                                            ui.sub(f"{p['nombre']} · {cuando}")], spacing=0),
-                                 ui.chip("Atendida", "ok") if atendida else ui.chip(etiqueta, tipo),
-                                 divisor=False)]
-            if not atendida:
-                contenido.append(ft.TextButton("Marcar como atendida", icon=ft.Icons.DONE,
-                                               on_click=lambda e, c=clave: atender(c)))
-            controles.append(ui.tarjeta(contenido))
+    def abrir(id_paciente):
+        app.paciente_sel = id_paciente
+        app.ir("m_detalle")
+
+    ids = {p["id"] for p in demo.PACIENTES}
+    for clave, id_paciente, nombre, nivel, texto, cuando in alertas(app):
+        etiqueta, tipo = SEVERIDAD[nivel]
+        atendida = clave in app.atendidas
+        contenido = [ui.fila(ft.Column([ui.texto(texto, negrita=True),
+                                        ui.sub(f"{nombre} · {cuando}")], spacing=0, expand=True),
+                             ui.chip("Atendida", "ok") if atendida else ui.chip(etiqueta, tipo),
+                             divisor=False)]
+        acciones = []
+        if not atendida:
+            acciones.append(ft.TextButton("Marcar como atendida", icon=ft.Icons.DONE,
+                                          on_click=lambda e, c=clave: atender(c)))
+        if id_paciente in ids:
+            acciones.append(ft.TextButton("Ver ficha", icon=ft.Icons.PERSON,
+                                          on_click=lambda e, i=id_paciente: abrir(i)))
+        if acciones:
+            contenido.append(ft.Row(acciones, wrap=True, spacing=0))
+        controles.append(ui.tarjeta(contenido))
     controles.append(ui.sub("Protocolo: una respuesta positiva en el ítem 9 del PHQ-9 genera una "
                             "alerta inmediata al personal de salud, sin importar el puntaje total."))
     return controles
