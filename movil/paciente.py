@@ -1,5 +1,5 @@
 """Pantallas del paciente: inicio, pastillero, asistente y progreso."""
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import flet as ft
 
@@ -65,7 +65,7 @@ ANIMOS = [  # (emoji, etiqueta, título de la frase, frase al elegirlo)
 
 def elegir_animo(app, indice):
     """Guarda el ánimo y muestra una frase de acompañamiento según la carita elegida."""
-    app.animo = indice
+    app.animo = app.animos[app.id_paciente()] = indice
     app.page.pop_dialog()
     app.dibujar()
     emoji, _, titulo_frase, frase = ANIMOS[indice]
@@ -103,6 +103,59 @@ def encuesta_animo(app):
                              width=360),
         actions=[ft.TextButton("Ahora no", on_click=lambda e: app.page.pop_dialog())],
         actions_alignment=ft.MainAxisAlignment.CENTER))
+
+
+# ------------------------------------------------------------------ síntomas
+SINTOMAS = ["Mareo", "Náusea", "Dolor de cabeza", "Cansancio", "Dolor de estómago", "Otro"]
+INTENSIDADES = ["Muy leve", "Leve", "Moderado", "Fuerte", "Muy fuerte"]
+
+
+def reportar_sintoma(app):
+    """Diálogo para avisar al equipo de salud de un síntoma; de 4/5 en adelante es alerta alta."""
+    elegido = {"sintoma": None, "intensidad": 3}
+    opciones = ft.Row(wrap=True, spacing=6, run_spacing=6)
+    nivel = ui.texto(INTENSIDADES[2], 14, ui.TEAL_OSCURO, negrita=True)
+
+    def pintar_opciones():
+        opciones.controls = [ft.Container(
+            ui.texto(s, 14, ft.Colors.WHITE if s == elegido["sintoma"] else ui.TEXTO),
+            bgcolor=ui.TEAL if s == elegido["sintoma"] else "#eef1f3", border_radius=999,
+            padding=ft.Padding.symmetric(horizontal=12, vertical=8), ink=True,
+            on_click=lambda e, s=s: elegir(s)) for s in SINTOMAS]
+
+    def elegir(sintoma):
+        elegido["sintoma"] = sintoma
+        pintar_opciones()
+        app.page.update()
+
+    def mover(e):
+        elegido["intensidad"] = int(e.control.value)
+        nivel.value = INTENSIDADES[elegido["intensidad"] - 1]
+        app.page.update()
+
+    def enviar(e):
+        if elegido["sintoma"] is None:
+            app.avisar("Elige qué sientes.", error=True)
+            return
+        n = elegido["intensidad"]
+        app.reportes.insert(0, {
+            "id": app.id_paciente(), "nombre": app.nombre or f"Folio {app.paciente}",
+            "texto": f"Síntoma: {elegido['sintoma'].lower()} ({INTENSIDADES[n - 1].lower()}, {n}/5)",
+            "nivel": "alta" if n >= 4 else "media",
+            "cuando": f"hoy {datetime.now():%H:%M}"})
+        app.page.pop_dialog()
+        app.avisar("Listo, tu equipo de salud ya lo puede ver 🩺")
+
+    pintar_opciones()
+    app.page.show_dialog(ft.AlertDialog(
+        title=ft.Text("¿Qué sientes?"),
+        content=ft.Column([
+            opciones, ft.Row([ui.sub("¿Qué tan fuerte es?"), nivel], spacing=6),
+            ft.Slider(value=3, min=1, max=5, divisions=4, on_change=mover),
+            ui.sub("No suspendas tu medicamento sin hablar antes con tu médico.", 12),
+        ], tight=True, spacing=8, width=340),
+        actions=[ft.TextButton("Cancelar", on_click=lambda e: app.page.pop_dialog()),
+                 ft.FilledButton("Avisar a mi equipo", on_click=enviar)]))
 
 
 def pagina_inicio(app):
@@ -143,6 +196,8 @@ def pagina_inicio(app):
                    ft.Row([ui.chip("🔥 3 días seguidos", "ok")])], expand=True, spacing=6),
     ], spacing=16)))
 
+    controles.append(ui.boton("Reportar un síntoma", lambda: reportar_sintoma(app),
+                              ft.Icons.HEALTH_AND_SAFETY))
     pendientes = TOTAL_ENCUESTAS - len(app.resultados)
     if pendientes:
         controles.append(ui.boton(f"Tienes {pendientes} encuestas pendientes",
@@ -295,14 +350,15 @@ def animo_semana(app):
 def pagina_progreso(app):
     semanas = demo.SEMANAS_PACIENTE
     esta_semana = semanas[-1]
+    dias = demo.adherencia_ultimos_dias()
     controles = [ui.titulo("Mi progreso"),
                  ui.tarjeta([ui.termometro_caritas(esta_semana),
                              ui.sub(f"Esta semana tomaste el {esta_semana}% de tus dosis. "
                                     f"La semana pasada: {semanas[-2]}% {ui.carita_pct(semanas[-2])}",
                                     text_align=ft.TextAlign.CENTER)],
                             "😊 ¿Cómo va tu adherencia?"),
-                 ui.tarjeta(ui.barras_v(semanas, [f"S{i + 1}" for i in range(len(semanas))]),
-                            "📈 Adherencia de las últimas 8 semanas"),
+                 ui.tarjeta(ui.barras_v([v for _, v in dias], [d for d, _ in dias]),
+                            "📈 Adherencia de los últimos 7 días"),
                  ui.tarjeta(animo_semana(app), "💭 Tu ánimo esta semana")]
     if app.resultados:
         items = [(r.instrumento, r.valor_fcm, r.codigo)
