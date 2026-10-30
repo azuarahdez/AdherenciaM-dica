@@ -43,6 +43,12 @@ class App:
         page.theme = ft.Theme(color_scheme_seed=ui.TEAL)
         page.on_view_pop = lambda e: self.ir(PADRE.get(self.pagina, self.pagina))
         self._base = None  # vista raíz "/" (ver dibujar)
+        # Lo que el paciente comparte con su equipo de salud; sobrevive a "Salir" para que el
+        # personal de salud lo vea al entrar en el mismo dispositivo.
+        self.reportes = []  # síntomas reportados: dict(id, nombre, texto, nivel, cuando)
+        self.animos = {}    # id de paciente → índice de paciente.ANIMOS elegido hoy
+        self.notas = {}     # id de paciente → [(fecha, nota)] del personal de salud
+        self.atendidas = set()  # claves de medico.alertas() ya atendidas
         self.reiniciar()
 
     # ------------------------------------------------------------- estado
@@ -54,12 +60,15 @@ class App:
         self.resultados = {}
         self.tomadas = None
         self.chat = None
-        self.atendidas = set()
         self.mostrar_apoyo = False
         self.animo = None  # índice de paciente.ANIMOS elegido hoy
         self.paciente_sel = None
         self.pagina = "entrada"
         self.dibujar()
+
+    def id_paciente(self):
+        """El paciente de ejemplo es Josefina (P2); los demás se identifican por su folio."""
+        return "P2" if self.demo else self.paciente
 
     def salir(self):
         self.reiniciar()
